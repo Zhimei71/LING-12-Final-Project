@@ -1,0 +1,287 @@
+---
+title: "Ling 12 Final Project"
+author: "Zhimei_Chen"
+date: '2022-12-07'
+output: 
+  html_document:
+    toc: true
+    toc_depth: 4
+    toc_float: true
+    code_folding: show
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+### Libraries Needed: 
+```{r, warning=FALSE,message=FALSE}
+library(dbplyr)
+library(tidyverse) 
+library(ggplot2)
+library(corrplot)
+library(ISLR)
+library(tidymodels)
+library(ggpubr)
+tidymodels_prefer()
+```
+
+### DATA 
+#### Credit Card Approval Prediction\
+https://www.kaggle.com/datasets/rikdifos/credit-card-approval-prediction?select=application_record.csv \
+application_record.csv contains appliers personal information, which I use as features for predicting.\
+credit_record.csv records users' behaviors of credit card. \
+
+### read csv and clean
+```{r,warning=FALSE}
+options(readr.show_col_types = FALSE)
+options(tibble.width = Inf) 
+library(janitor)
+application <- read_csv("application_record.csv")%>% 
+  clean_names()
+credit <- read_csv("credit_record.csv")%>% 
+  clean_names()
+head(application)
+```
+
+### DATA: application_data
+
+#### Observations
+```{r}
+cat("Observation number in application: ", nrow(application))
+```
+
+#### Trans NA to "Dont wanna tell"
+```{r}
+application$occupation_type[is.na(application$occupation_type)] <- "Don't wanna tell"
+```
+
+#### turn to characters and factors 
+```{r,cols.print=18}
+application <- application %>% 
+  mutate(id = as.character(id),
+         code_gender = factor(code_gender),
+         flag_own_car = factor(flag_own_car),
+         flag_own_realty = factor(flag_own_realty),
+         name_income_type = factor(name_income_type),
+         name_education_type = factor(name_education_type),
+         name_family_status = factor(name_family_status),
+         name_housing_type = factor(name_housing_type),
+         flag_mobil = factor(flag_mobil),
+         flag_work_phone = factor(flag_work_phone),
+         flag_phone = factor(flag_phone),
+         flag_email = factor(flag_email),
+         occupation_type = factor(occupation_type))
+head(application)
+```
+
+
+#### Variables
+**id**:	Client number\
+**code_gender**: Gender [M,F]\
+**flag_own_car**: Is there a car [N,Y]\
+**flag_own_realty**: Is there a property [N,Y]\
+**cnt_children**: Number of children\
+**amt_income_total**: Annual income\
+**name_income_type**: Income category [Commercial associate, Pensioner, State servant,  Student, Working]\
+**name_education_type**: Education level [Academic degree, Higher education, Incomplete higher, Lower secondary, Secondary / secondary special]\
+**name_family_status**: Marital status [Civil marriage, Married, Separated, Single / not married, Widow]\
+**name_housing_type**: Way of living [Co-op apartment, House / apartment, Municipal apartment, Office apartment, Rented apartment, With parents]\
+**days_birth**: Birthday	Count backwards from current day (0), -1 means yesterday\
+**days_employed**: Start date of employment	Count backwards from current day(0). If positive, it means the person currently unemployed.\
+**flag_mobile**: Is there a mobile phone [0,1]	\
+**flag_work_phone**: Is there a work phone [0,1]\
+**flag_phone**: Is there a phone	[0,1]\
+**flag_email**: Is there an email	[0,1]\
+**occupation_type**: Occupation	[Laborers, Core staff, Sales staff, Managers, Drivers, (Other) , NA's]\
+**cnt_fam_members**: Family size	\
+
+#### trans inappropriate days of employees to 0 days
+```{r}
+application$days_employed[application$days_employed==0] ##no one get 0 days
+head(application$days_employed[application$days_employed>0])
+#Therefore, I think who don't have work has assigned as "36524" days
+#trans the number of inappropriate days of employees to 0 days
+application$days_employed[application$days_employed == 365243] <- 0
+```
+
+### DATA: credit_data
+```{r}
+head(credit)
+summary(credit)
+```
+There is no missing data in credit.
+
+#### Variables
+id: Client number	\
+months_balance: Record month	The month of the extracted data is the starting point, backwards, 0 is the current month, -1 is the previous month, and so on\
+status: Status (*more in "transfer status"*)
+
+
+#### Observations
+```{r}
+cat("Observation number in credit: ",nrow(credit))
+```
+#### transfer status 
+0: 1-29 days past due --> 1\
+1: 30-59 days past due --> 2\
+2: 60-89 days overdue --> 3\
+3: 90-119 days overdue --> 4\
+4: 120-149 days overdue --> 5\
+5: Overdue or bad debts, write-offs for more than 150 days --> 6\
+C: paid off that month --> 0\
+X: No loan for the month --> 0
+```{r}
+credit_needed <- credit
+credit_needed$id <- as.character(credit_needed$id)
+credit_needed$status<- as.character(credit_needed$status)
+
+credit_needed$status[credit_needed$status == "5"] <- 6
+credit_needed$status[credit_needed$status == "4"] <- 5
+credit_needed$status[credit_needed$status == "3"] <- 4
+credit_needed$status[credit_needed$status == "2"] <- 3
+credit_needed$status[credit_needed$status == "1"] <- 2
+credit_needed$status[credit_needed$status == "0"] <- 1
+credit_needed$status[credit_needed$status == "C"] <- 0
+credit_needed$status[credit_needed$status == "X"] <- 0
+
+head(credit_needed)
+
+```
+
+#### turn to factors
+```{r,cols.print=18}
+credit_needed <- credit_needed %>% 
+  mutate(status = factor(status))
+head(credit_needed)
+```
+
+first year credit
+```{r}
+first_year_credit <- credit_needed %>%
+             arrange(id,months_balance,status) %>%
+             group_by(id) %>%
+             slice(1:12) %>%
+             mutate(month = seq(1:length(id)))
+           
+head(first_year_credit)
+```
+
+### Combine two datasets
+
+#### Example
+
+An example here who, with ID: 5008805, applied credit card and had been approved.
+```{r,warning=FALSE}
+first_year_credit[first_year_credit$id == 5008805,]
+credit[credit$id == 5008805,]
+application[application$id == 5008805,]
+```
+
+Therefore, we can combine application data with first year, first month credit data
+```{r}
+length(unique(first_year_credit$id)) 
+length(unique(credit$id))
+length(unique(application$id))
+
+has_credit <- merge(application, first_year_credit, 
+                  by.x = "id", by.y = "id")
+cat(length(unique(has_credit$id)),"people has credit card with Info here.")
+
+first_month <- has_credit %>%
+  filter(month == min(month))
+```
+
+#### Observe 
+
+those had been approved's information (numbers)
+```{r}
+numchr <- first_month %>%
+  ggplot(aes(x = cnt_children)) +
+  geom_boxplot(fill="darkturquoise")+
+  ggtitle("Amount of children")
+income <- first_month %>%
+  ggplot(aes(x = amt_income_total)) +
+  geom_boxplot(fill="darkturquoise")+
+  ggtitle("Annual income")
+age <- first_month %>%
+  ggplot(aes(x = abs(days_birth)/365))+
+  geom_boxplot(fill="darkturquoise")+
+  ggtitle("Age")
+employedyear <- first_month %>%
+  ggplot(aes(x = abs(days_employed)/365))+
+  geom_boxplot(fill="darkturquoise")+
+  ggtitle("Years been Employeed")
+ctfmem <- first_month %>%
+  ggplot(aes(x = cnt_fam_members)) +
+  geom_boxplot(fill="darkturquoise")+
+  ggtitle("Amount of family members")
+ggarrange(numchr, income, age, employedyear, ctfmem, 
+          nrow = 3,ncol=2,
+          labels = c('a', 'b','c','d','e'))
+```
+
+those had been approved's information (factors - YES/NO)
+```{r}
+gender <- first_month %>%
+  ggplot(aes(x = code_gender)) +
+  geom_bar(fill="darkturquoise", stat = "count") +
+  ggtitle("Gender")
+iscar <- first_month %>%
+  ggplot(aes(x = flag_own_car)) +
+  geom_bar(fill="darkturquoise", stat = "count")+
+  ggtitle("Has car?")
+isrealty <- first_month %>%
+  ggplot(aes(x = flag_own_realty)) +
+  geom_bar(fill="darkturquoise", stat = "count")+
+  ggtitle("Has realty?")
+ismobile <- first_month %>%
+  ggplot(aes(x = flag_mobil)) +
+  geom_bar(fill="darkturquoise", stat = "count")+
+  ggtitle("Has mobile?")
+isworkphone <- first_month %>%
+  ggplot(aes(x = flag_work_phone)) +
+  geom_bar(fill="darkturquoise", stat = "count")+
+  ggtitle("Has work phone?")
+isphone <- first_month %>%
+  ggplot(aes(x = flag_phone)) +
+  geom_bar(fill="darkturquoise", stat = "count")+
+  ggtitle("Has phone?")
+isemail <- first_month %>%
+  ggplot(aes(x = flag_email)) +
+  geom_bar(fill="darkturquoise", stat = "count")+
+  ggtitle("Has email?")
+
+ggarrange(gender, iscar, isrealty, ismobile,isworkphone, isphone, isemail,
+          nrow = 2,ncol=4,
+          labels = c('a', 'b','c','d','e','f','g'))
+```
+
+those had been approved's information (factors - REST)
+```{r}
+inctype <- first_month %>%
+  ggplot(aes(x = name_income_type)) +
+  geom_bar(fill="darkturquoise", stat = "count") +
+  coord_flip() +
+  ggtitle("Name Income Type")
+inctype
+edutype <- first_month %>%
+  ggplot(aes(x = name_education_type)) +
+  geom_bar(fill="darkturquoise", stat = "count") +
+  coord_flip() +
+  ggtitle("Name Education Type")
+edutype
+houtype <- first_month %>%
+  ggplot(aes(x = name_housing_type)) +
+  geom_bar(fill="darkturquoise", stat = "count") +
+  coord_flip() +
+  ggtitle("Name Housing Type")
+houtype
+occtype <- first_month %>%
+  ggplot(aes(x = occupation_type)) +
+  geom_bar(fill="darkturquoise")+
+  coord_flip() +
+  ggtitle("Occupation Type")
+occtype
+```
